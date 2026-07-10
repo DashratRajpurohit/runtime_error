@@ -6,6 +6,7 @@ import { GeminiAdapter } from './adapters/gemini.js';
 import { OllamaAdapter } from './adapters/ollama.js';
 import { chunkText } from './lib/contentChunker.js';
 import { getSystemPrompt } from './lib/promptBuilder.js';
+import { buildAgentPrompt } from './lib/agentPlanner.js';
 import { createRequire } from 'module';
 const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
@@ -207,6 +208,48 @@ app.post('/api/summarize', async (req, res) => {
     res.status(500).json({
       error: {
         code: 'LLM_ERROR',
+        message: err.message
+      }
+    });
+  }
+});
+
+app.post('/api/agent', async (req, res) => {
+  const { userTask, elements, history } = req.body;
+
+  if (!userTask) {
+    return res.status(400).json({ error: 'Missing userTask' });
+  }
+  if (!Array.isArray(elements)) {
+    return res.status(400).json({ error: 'Missing or invalid elements list' });
+  }
+
+  const { system, prompt } = buildAgentPrompt(userTask, elements, history || []);
+
+  try {
+    const result = await llm.complete({
+      systemPrompt: system,
+      pageContent: '',
+      history: [],
+      userQuery: prompt,
+      format: 'json'
+    });
+
+    let actionPlan;
+    try {
+      actionPlan = JSON.parse(result.text);
+    } catch (parseError) {
+      console.warn('[Backend Agent Parse Retry] Failed to parse action JSON:', result.text);
+      let cleanedText = result.text.replace(/```json/g, '').replace(/```/g, '').trim();
+      actionPlan = JSON.parse(cleanedText);
+    }
+
+    res.json({ action: actionPlan });
+  } catch (err) {
+    console.error('[Backend Agent Route Error]:', err);
+    res.status(500).json({
+      error: {
+        code: 'AGENT_LLM_ERROR',
         message: err.message
       }
     });
