@@ -75,6 +75,42 @@ app.get('/api/status', async (req, res) => {
   }
 });
 
+app.post('/api/tts', async (req, res) => {
+  try {
+    const { text, lang } = req.body;
+    if (!text) {
+      return res.status(400).json({ error: 'No text provided' });
+    }
+
+    let voice = 'af_bella';
+    if (lang && lang.startsWith('en-GB')) {
+      voice = 'bf_emma';
+    }
+
+    const kokoroUrl = process.env.KOKORO_SERVER_URL || 'http://localhost:8880/v1/audio/speech';
+    const response = await fetch(kokoroUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: text,
+        voice: voice,
+        speed: 1.0
+      })
+    });
+
+    if (!response.ok) {
+      throw new Error(`Kokoro server status: ${response.status}`);
+    }
+
+    res.setHeader('Content-Type', response.headers.get('Content-Type') || 'audio/wav');
+    const arrayBuffer = await response.arrayBuffer();
+    res.send(Buffer.from(arrayBuffer));
+  } catch (err) {
+    console.error('[TTS Proxy Error]', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/api/parse-pdf', async (req, res) => {
   try {
     const { fileData } = req.body;
@@ -108,9 +144,16 @@ app.post('/api/query', async (req, res) => {
     if (pageContent.extractionMethod) meta.push(`Extraction Method: ${pageContent.extractionMethod}`);
     if (pageContent.wordCount) meta.push(`Word Count: ${pageContent.wordCount}`);
 
+    // Truncate webpage content if it exceeds context limit (3500 words ~ 4600 tokens)
+    let textContent = pageContent.textContent || '';
+    const words = textContent.split(/\s+/).filter(Boolean);
+    if (words.length > 3500) {
+      textContent = words.slice(0, 3500).join(' ') + '\n\n... [Content truncated due to length limits]';
+    }
+
     pageText = meta.length > 0
-      ? `--- PAGE METADATA ---\n${meta.join('\n')}\n\n--- PAGE CONTENT ---\n${pageContent.textContent}`
-      : pageContent.textContent;
+      ? `--- PAGE METADATA ---\n${meta.join('\n')}\n\n--- PAGE CONTENT ---\n${textContent}`
+      : textContent;
   }
 
   try {
@@ -173,23 +216,31 @@ app.post('/api/summarize', async (req, res) => {
       });
     }
 
-    // Large page: Map phase (summarize each chunk)
-    console.log(`[Backend Map-Reduce] Processing ${chunks.length} chunks...`);
-    const chunkSummaries = await Promise.all(
-      chunks.map(async (chunk, idx) => {
-        const res = await llm.complete({
-          systemPrompt: 'You are an AI Browser Companion. Provide a detailed, comprehensive summary of this portion of the webpage context. Retain all key arguments, core concepts, metrics, names, and important figures.',
-          pageContent: chunk,
-          history: [],
-          userQuery: 'Analyze and summarize this section in detail, ensuring all key context is preserved.'
-        });
-        return `[Section ${idx + 1} Summary]: ${res.text}`;
-      })
-    );
+    // Large page: Map phase (summarize each chunk sequentially to avoid local LLM resource exhaustion)
+    console.log(`[Backend Map-Reduce] Processing ${chunks.length} chunks sequentially...`);
+    const chunkSummaries = [];
+    for (let idx = 0; idx < chunks.length; idx++) {
+      const chunk = chunks[idx];
+      console.log(`[Backend Map-Reduce] Summarizing chunk ${idx + 1}/${chunks.length}...`);
+      const res = await llm.complete({
+        systemPrompt: 'You are an AI Browser Companion. Provide a detailed, comprehensive summary of this portion of the webpage context. Retain all key arguments, core concepts, metrics, names, and important figures.',
+        pageContent: chunk,
+        history: [],
+        userQuery: 'Analyze and summarize this section in detail, ensuring all key context is preserved.'
+      });
+      chunkSummaries.push(`[Section ${idx + 1} Summary]: ${res.text}`);
+    }
 
     // Reduce phase (summarize the combined summaries)
-    const combinedSummaryText = chunkSummaries.join('\n\n');
+    let combinedSummaryText = chunkSummaries.join('\n\n');
     console.log('[Backend Map-Reduce] Reducing summaries...');
+    
+    // Ensure combined summaries do not exceed context window limits (max 3000 words)
+    const combinedWords = combinedSummaryText.split(/\s+/).filter(Boolean);
+    if (combinedWords.length > 3000) {
+      combinedSummaryText = combinedWords.slice(0, 3000).join(' ') + '\n\n... [Content truncated due to length limits]';
+    }
+
     const reduceResult = await llm.complete({
       systemPrompt: getSystemPrompt('SUMMARIZE', targetLanguage),
       pageContent: combinedSummaryText,

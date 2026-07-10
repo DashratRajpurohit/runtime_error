@@ -14,6 +14,7 @@ function App() {
   const [isIntentOpen, setIsIntentOpen] = useState(false);
   const [isSidebarActive, setIsSidebarActive] = useState(false);
   const [showSidebar, setShowSidebar] = useState(true);
+  const [showRightSidebar, setShowRightSidebar] = useState(true);
   const [showHelp, setShowHelp] = useState(false);
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [activeTab, setActiveTab] = useState('chat'); // chat | archive | models
@@ -357,6 +358,17 @@ function App() {
     setCurrentSessionId(nextActiveId);
     if (selectedArchiveId === sessionId) {
       setSelectedArchiveId(null);
+    }
+  };
+
+  // Select/switch active chat session
+  const handleSelectSession = (sessionId) => {
+    currentSessionIdRef.current = sessionId;
+    setCurrentSessionId(sessionId);
+    if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ lastSessionId: sessionId });
+    } else {
+      localStorage.setItem('lastSessionId', sessionId.toString());
     }
   };
 
@@ -998,263 +1010,711 @@ function App() {
 
   if (hasConsent === null) return null;
 
-  return (
-    <div className="extension-container">
-      <div className="mac-window" style={{ width: '100%', height: '100%', borderRadius: '12px' }}>
-        <div className="mac-titlebar" onPointerDown={handleTitlebarPointerDown} style={{ cursor: 'move' }}>
-          <div className="mac-titlebar-left">
-            <div className="mac-circle mac-red" onClick={handleClose}></div>
-            <div className="mac-circle mac-yellow"></div>
-            <div className="mac-circle mac-green"></div>
-          </div>
-          <div className="mac-titlebar-center">AI Browser Companion</div>
-          <div className="mac-titlebar-right">
-            <button className={`mac-icon-btn ${showSidebar ? 'active' : ''}`} onClick={() => setShowSidebar(!showSidebar)} title="Toggle Sidebar">
-              <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
-                <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm0 1v10h10V3H3zm1 1h2v8H4V4z"/>
-              </svg>
-            </button>
-          </div>
-        </div>
+  const isPopup = (typeof window !== 'undefined' && window.location.protocol.startsWith('chrome-extension')) || (typeof window !== 'undefined' && window.location.search.includes('mode=popup'));
 
-        <div className="mac-body">
-          {showSidebar && (
-            <div className="mac-sidebar">
-              <div className="mac-section">
-                <span className="mac-section-title">MODEL RUNNER</span>
-                <div 
-                  className="mac-model-card" 
-                  onClick={() => setShowModelHub(!showModelHub)} 
-                  style={{ 
-                    cursor: 'pointer', 
-                    padding: '8px 12px', 
-                    display: 'flex', 
-                    alignItems: 'center', 
-                    gap: '8px',
-                    background: '#ffffff',
-                    border: '1px solid #e2e8f0',
-                    borderRadius: '8px'
-                  }}
-                >
-                  <span className={`mac-status-dot ${backendStatus}`}></span>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '8px' }}>
-                    <div style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.2' }}>
-                      <span className="mac-model-provider" style={{ fontSize: '11px', fontWeight: 'bold', color: '#22c55e' }}>LM</span>
-                      <span className="mac-model-provider" style={{ fontSize: '11px', fontWeight: 'bold', color: '#22c55e' }}>Studio</span>
+  const renderPopupMode = () => {
+    return (
+      <div className="extension-container popup-mode">
+        <div className="mac-window" style={{ width: '100%', height: '100%', borderRadius: '12px' }}>
+          <div className="mac-titlebar" onPointerDown={handleTitlebarPointerDown} style={{ cursor: 'move' }}>
+            <div className="mac-titlebar-left">
+              <div className="mac-circle mac-red" onClick={handleClose}></div>
+              <div className="mac-circle mac-yellow"></div>
+              <div className="mac-circle mac-green"></div>
+            </div>
+            <div className="mac-titlebar-center">AI Browser Companion</div>
+            <div className="mac-titlebar-right">
+              <button className={`mac-icon-btn ${showSidebar ? 'active' : ''}`} onClick={() => setShowSidebar(!showSidebar)} title="Toggle Sidebar">
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm0 1v10h10V3H3zm1 1h2v8H4V4z"/>
+                </svg>
+              </button>
+            </div>
+          </div>
+
+          <div className="mac-body">
+            {showSidebar && (
+              <div className="mac-sidebar">
+                <div className="mac-section">
+                  <span className="mac-section-title">MODEL RUNNER</span>
+                  <div 
+                    className="mac-model-card" 
+                    onClick={() => setShowModelHub(!showModelHub)} 
+                    style={{ 
+                      cursor: 'pointer', 
+                      padding: '8px 12px', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px',
+                      background: '#ffffff',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px'
+                    }}
+                  >
+                    <span className={`mac-status-dot ${backendStatus}`}></span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.2' }}>
+                        <span className="mac-model-provider" style={{ fontSize: '11px', fontWeight: 'bold', color: '#22c55e' }}>LM</span>
+                        <span className="mac-model-provider" style={{ fontSize: '11px', fontWeight: 'bold', color: '#22c55e' }}>Studio</span>
+                      </div>
+                      <span className="mac-model-name" style={{ fontSize: '10px', color: '#22c55e', fontWeight: 'bold', textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '85px' }}>
+                        ({activeModel})
+                      </span>
                     </div>
-                    <span className="mac-model-name" style={{ fontSize: '10px', color: '#22c55e', fontWeight: 'bold', textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '85px' }}>
-                      ({activeModel})
-                    </span>
+                  </div>
+                </div>
+
+                <div className="mac-section">
+                  <span className="mac-section-title">VOICE CONTROLS</span>
+                  <div className="mac-voice-controls">
+                    <button className="mac-ctrl-btn" onClick={tts.resume} title="Play / Resume">▶</button>
+                    <button className="mac-ctrl-btn" onClick={tts.pause} title="Pause">⏸</button>
+                    <button className="mac-ctrl-btn" onClick={tts.stop} title="Stop">⏹</button>
+                  </div>
+                </div>
+
+                <div className="mac-section">
+                  <span className="mac-section-title">SPEAKER VOICE</span>
+                  <div className="mac-select-wrapper">
+                    <select 
+                      value={activeSession ? activeSession.targetLanguage : targetLanguage}
+                      onChange={(e) => {
+                        const newLang = e.target.value;
+                        if (activeSession) {
+                          activeSession.targetLanguage = newLang;
+                          const updated = sessionsRef.current.map(s => s.id === currentSessionIdRef.current ? activeSession : s);
+                          saveSessionsToStorage(updated, currentSessionIdRef.current);
+                        } else {
+                          setTargetLanguage(newLang);
+                        }
+                      }}
+                      className="mac-select"
+                    >
+                      {['English (US)', 'English (UK)', 'Hindi', 'Bengali', 'Tamil', 'Telugu', 'Marathi', 'Gujarati', 'Kannada', 'Malayalam', 'Punjabi', 'Odia', 'Urdu', 'Sanskrit'].map(lang => (
+                        <option key={lang} value={lang}>{lang}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mac-section" style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button className="mac-new-chat-btn" onClick={handleNewChat} style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #cbd5e1',
+                    background: '#ffffff',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    color: '#475569'
+                  }}>
+                    ➕ New Chat
+                  </button>
+                  
+                  <button className="mac-extract-btn" onClick={handleExtract} style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #3b82f6',
+                    background: '#3b82f6',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    color: '#ffffff',
+                    marginTop: '2px'
+                  }}>
+                    ⚡ Extract Page
+                  </button>
+                  
+                  <div style={{ marginTop: '2px' }}>
+                    <button 
+                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                      style={{
+                        width: '100%',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid #cbd5e1',
+                        background: '#ffffff',
+                        fontSize: '11px',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        color: '#475569'
+                      }}
+                    >
+                      📎 Upload PDF
+                    </button>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      onChange={handleFileUpload} 
+                      accept=".txt,.js,.css,.html,.md,.json,.csv,.pdf" 
+                      style={{ display: 'none' }} 
+                    />
                   </div>
                 </div>
               </div>
+            )}
 
-              <div className="mac-section">
-                <span className="mac-section-title">VOICE CONTROLS</span>
-                <div className="mac-voice-controls">
-                  <button className="mac-ctrl-btn" onClick={tts.resume} title="Play / Resume">▶</button>
-                  <button className="mac-ctrl-btn" onClick={tts.pause} title="Pause">⏸</button>
-                  <button className="mac-ctrl-btn" onClick={tts.stop} title="Stop">⏹</button>
-                </div>
+            <div className="mac-chat-pane">
+              <div className="mac-messages-container" ref={chatHistoryRef}>
+                {activeSession && activeSession.messages.length > 0 ? (
+                  activeSession.messages.map((msg, index) => {
+                    if (index === 0 && activeSession.messages.length > 1 && msg.content.includes("MOMENTUM OS")) return null;
+                    return (
+                      <div key={index} className={`mac-msg-row ${msg.role}`}>
+                        <div className="mac-msg-bubble">
+                          {msg.content}
+                          {msg.role === 'assistant' && (
+                            <button
+                              onClick={() => tts.speak(msg.content.replace(/[#*`_]/g, ''), getLangCode(activeSession.targetLanguage))}
+                              className="mac-bubble-speaker"
+                              title="Read aloud"
+                            >
+                              🔊
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <div className="mac-empty-state">
+                    <div style={{ fontSize: '32px', marginBottom: '8px' }}>💬</div>
+                    <h3 style={{ fontSize: '13px', fontWeight: 600, color: '#333333' }}>Hello! I am your macOS browser assistant.</h3>
+                    <p style={{ fontSize: '11px', color: '#888888' }}>Type a message or speak to start.</p>
+
+                    <div className="mac-chips-container" style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                      <button className="mac-chip-btn" onClick={() => handleIntentAction('SUMMARIZE')}>
+                        📝 Summarize Page
+                      </button>
+                      <button className="mac-chip-btn" onClick={() => handleIntentAction('EXPLAIN_SIMPLE')}>
+                        👁️ Explain Simply
+                      </button>
+                      <button className="mac-chip-btn" onClick={() => handleIntentAction('EXAMPLE')}>
+                        📂 Generate Example
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="mac-section">
-                <span className="mac-section-title">SPEAKER VOICE</span>
-                <div className="mac-select-wrapper">
-                  <select 
-                    value={activeSession ? activeSession.targetLanguage : targetLanguage}
-                    onChange={(e) => {
-                      const newLang = e.target.value;
-                      if (activeSession) {
-                        activeSession.targetLanguage = newLang;
-                        const updated = sessionsRef.current.map(s => s.id === currentSessionIdRef.current ? activeSession : s);
-                        saveSessionsToStorage(updated, currentSessionIdRef.current);
-                      } else {
-                        setTargetLanguage(newLang);
-                      }
-                    }}
-                    className="mac-select"
-                  >
-                    {['English (US)', 'English (UK)', 'Hindi', 'Bengali', 'Tamil', 'Telugu', 'Marathi', 'Gujarati', 'Kannada', 'Malayalam', 'Punjabi', 'Odia', 'Urdu', 'Sanskrit'].map(lang => (
-                      <option key={lang} value={lang}>{lang}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              <div className="mac-section" style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
-                <button className="mac-new-chat-btn" onClick={handleNewChat} style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #cbd5e1',
-                  background: '#ffffff',
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  color: '#475569'
-                }}>
-                  ➕ New Chat
-                </button>
-                
-                <button className="mac-extract-btn" onClick={handleExtract} style={{
-                  padding: '6px 12px',
-                  borderRadius: '6px',
-                  border: '1px solid #3b82f6',
-                  background: '#3b82f6',
-                  fontSize: '11px',
-                  cursor: 'pointer',
-                  fontWeight: 600,
-                  color: '#ffffff',
-                  marginTop: '2px'
-                }}>
-                  ⚡ Extract Page
-                </button>
-                
-                <div style={{ marginTop: '2px' }}>
+              <div className="mac-footer">
+                <input 
+                  type="text" 
+                  className="mac-input"
+                  placeholder={stt.isListening ? "Listening..." : "Type a message or ask a question..."}
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                />
+                {stt.isSupported !== false && (
                   <button 
-                    onClick={() => fileInputRef.current && fileInputRef.current.click()}
-                    style={{
-                      width: '100%',
-                      padding: '6px 12px',
-                      borderRadius: '6px',
-                      border: '1px solid #cbd5e1',
-                      background: '#ffffff',
-                      fontSize: '11px',
-                      cursor: 'pointer',
-                      fontWeight: 600,
-                      color: '#475569'
-                    }}
+                    className={`mac-btn-mic ${stt.isListening ? 'listening' : ''}`}
+                    onClick={handleMicToggle}
+                    title={stt.isListening ? "Listening... Click to stop" : "Speak to type"}
                   >
-                    📎 Upload PDF
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="5" y="9" width="2" height="6" rx="1" fill="currentColor"/>
+                      <rect x="9" y="5" width="2" height="14" rx="1" fill="currentColor"/>
+                      <rect x="13" y="7" width="2" height="10" rx="1" fill="currentColor"/>
+                      <rect x="17" y="9" width="2" height="6" rx="1" fill="currentColor"/>
+                    </svg>
                   </button>
-                  <input 
-                    type="file" 
-                    ref={fileInputRef} 
-                    onChange={handleFileUpload} 
-                    accept=".txt,.js,.css,.html,.md,.json,.csv,.pdf" 
-                    style={{ display: 'none' }} 
-                  />
+                )}
+                <button className="mac-btn-send" onClick={handleSend}>
+                  Send
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {showModelHub && (
+            <div className="mac-overlay">
+              <div className="mac-overlay-header">
+                <span>🤖 Local Model Hub</span>
+                <button onClick={() => setShowModelHub(false)}>✕</button>
+              </div>
+              <div className="mac-overlay-body">
+                <div className="mac-status-row">
+                  <span className={`mac-dot ${backendStatus === 'online' ? 'online' : 'offline'}`}></span>
+                  <span>Ollama Status: <strong>{backendStatus === 'online' ? 'Online' : 'Offline'}</strong></span>
+                </div>
+                {backendStatus === 'offline' && (
+                  <div className="mac-alert-box">
+                    Ollama is offline. Start it by running <code>ollama serve</code> in terminal.
+                  </div>
+                )}
+                <div style={{ marginTop: '10px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: '#888', display: 'block', marginBottom: '4px' }}>DOWNLOADED MODELS:</span>
+                  {downloadedModels.length === 0 ? (
+                    <span style={{ fontSize: '11px', color: '#aaa' }}>No models downloaded.</span>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {downloadedModels.map(m => (
+                        <span 
+                          key={m} 
+                          className={`mac-model-tag ${activeModel === m ? 'active' : ''}`}
+                          onClick={() => {
+                            setActiveModel(m);
+                            setShowModelHub(false);
+                          }}
+                        >
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                 </div>
               </div>
             </div>
           )}
+        </div>
+      </div>
+    );
+  };
 
-          <div className="mac-chat-pane">
-            <div className="mac-messages-container" ref={chatHistoryRef}>
-              {activeSession && activeSession.messages.length > 0 ? (
-                activeSession.messages.map((msg, index) => {
-                  if (index === 0 && activeSession.messages.length > 1 && msg.content.includes("MOMENTUM OS")) return null;
-                  return (
-                    <div key={index} className={`mac-msg-row ${msg.role}`}>
-                      <div className="mac-msg-bubble">
-                        {msg.content}
-                        {msg.role === 'assistant' && (
-                          <button
-                            onClick={() => tts.speak(msg.content.replace(/[#*`_]/g, ''), getLangCode(activeSession.targetLanguage))}
-                            className="mac-bubble-speaker"
-                            title="Read aloud"
-                          >
-                            🔊
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              ) : (
-                <div className="mac-empty-state">
-                  <div style={{ fontSize: '32px', marginBottom: '8px' }}>💬</div>
-                  <h3 style={{ fontSize: '13px', fontWeight: 600, color: '#333333' }}>Hello! I am your macOS browser assistant.</h3>
-                  <p style={{ fontSize: '11px', color: '#888888' }}>Type a message or speak to start.</p>
-
-                  <div className="mac-chips-container" style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
-                    <button className="mac-chip-btn" onClick={() => handleIntentAction('SUMMARIZE')}>
-                      📝 Summarize Page
-                    </button>
-                    <button className="mac-chip-btn" onClick={() => handleIntentAction('EXPLAIN_SIMPLE')}>
-                      👁️ Explain Simply
-                    </button>
-                    <button className="mac-chip-btn" onClick={() => handleIntentAction('EXAMPLE')}>
-                      📂 Generate Example
-                    </button>
-                  </div>
-                </div>
-              )}
+  const renderDashboardMode = () => {
+    return (
+      <div className="extension-container db-mode">
+        <div className="mac-window" style={{ width: '100%', height: '100%', borderRadius: '12px' }}>
+          <div className="mac-titlebar" onPointerDown={handleTitlebarPointerDown} style={{ cursor: 'move' }}>
+            <div className="mac-titlebar-left">
+              <div className="mac-circle mac-red" onClick={handleClose}></div>
+              <div className="mac-circle mac-yellow"></div>
+              <div className="mac-circle mac-green"></div>
             </div>
-
-            <div className="mac-footer">
-              <input 
-                type="text" 
-                className="mac-input"
-                placeholder={stt.isListening ? "Listening..." : "Type a message or ask a question..."}
-                value={inputText}
-                onChange={(e) => setInputText(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-              />
-              {stt.isSupported !== false && (
-                <button 
-                  className={`mac-btn-mic ${stt.isListening ? 'listening' : ''}`}
-                  onClick={handleMicToggle}
-                  title={stt.isListening ? "Listening... Click to stop" : "Speak to type"}
-                >
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                    <rect x="5" y="9" width="2" height="6" rx="1" fill="currentColor"/>
-                    <rect x="9" y="5" width="2" height="14" rx="1" fill="currentColor"/>
-                    <rect x="13" y="7" width="2" height="10" rx="1" fill="currentColor"/>
-                    <rect x="17" y="9" width="2" height="6" rx="1" fill="currentColor"/>
-                  </svg>
-                </button>
-              )}
-              <button className="mac-btn-send" onClick={handleSend}>
-                Send
+            <div className="mac-titlebar-center">AI Browser Companion</div>
+            <div className="mac-titlebar-right" style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+              <button 
+                className={`mac-icon-btn ${showSidebar ? 'active' : ''}`} 
+                onClick={() => setShowSidebar(!showSidebar)} 
+                title="Toggle Left Sidebar (History)"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+                  <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm0 1v10h10V3H3zm1 1h2v8H4V4z"/>
+                </svg>
+              </button>
+              <button 
+                className={`mac-icon-btn ${showRightSidebar ? 'active' : ''}`} 
+                onClick={() => setShowRightSidebar(!showRightSidebar)} 
+                title="Toggle Right Sidebar (Controls)"
+              >
+                <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor" style={{ transform: 'scaleX(-1)' }}>
+                  <path d="M3 2h10a1 1 0 011 1v10a1 1 0 01-1 1H3a1 1 0 01-1-1V3a1 1 0 011-1zm0 1v10h10V3H3zm1 1h2v8H4V4z"/>
+                </svg>
               </button>
             </div>
           </div>
-        </div>
 
-        {showModelHub && (
-          <div className="mac-overlay">
-            <div className="mac-overlay-header">
-              <span>🤖 Local Model Hub</span>
-              <button onClick={() => setShowModelHub(false)}>✕</button>
-            </div>
-            <div className="mac-overlay-body">
-              <div className="mac-status-row">
-                <span className={`mac-dot ${backendStatus === 'online' ? 'online' : 'offline'}`}></span>
-                <span>Ollama Status: <strong>{backendStatus === 'online' ? 'Online' : 'Offline'}</strong></span>
-              </div>
-              {backendStatus === 'offline' && (
-                <div className="mac-alert-box">
-                  Ollama is offline. Start it by running <code>ollama serve</code> in terminal.
+          <div className="mac-body">
+            {showSidebar && (
+              <div className="mac-sidebar db-left-sidebar">
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                  <button className="mac-new-chat-btn" onClick={handleNewChat} style={{
+                    padding: '8px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid var(--border-color)',
+                    background: 'var(--accent-orange)',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    fontWeight: 'bold',
+                    color: '#ffffff',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center',
+                    gap: '6px',
+                    boxShadow: '0 4px 10px rgba(255, 122, 0, 0.2)'
+                  }}>
+                    <span>➕</span>
+                    <span>New Chat</span>
+                  </button>
+
+                  <div className="db-search-container" style={{ position: 'relative' }}>
+                    <input 
+                      type="text" 
+                      placeholder="Search previous chats..." 
+                      value={archiveSearch}
+                      onChange={(e) => setArchiveSearch(e.target.value)}
+                      style={{
+                        width: '100%',
+                        padding: '6px 10px 6px 28px',
+                        background: 'var(--bg-card)',
+                        border: '1px solid var(--border-color)',
+                        borderRadius: '6px',
+                        color: 'var(--text-primary)',
+                        fontSize: '11px',
+                        outline: 'none'
+                      }}
+                    />
+                    <span style={{ position: 'absolute', left: '8px', top: '5px', color: 'var(--text-muted)', fontSize: '12px' }}>🔍</span>
+                  </div>
                 </div>
-              )}
-              <div style={{ marginTop: '10px' }}>
-                <span style={{ fontSize: '11px', fontWeight: 700, color: '#888', display: 'block', marginBottom: '4px' }}>DOWNLOADED MODELS:</span>
-                {downloadedModels.length === 0 ? (
-                  <span style={{ fontSize: '11px', color: '#aaa' }}>No models downloaded.</span>
+
+                <div className="db-sessions-list" style={{
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: '4px',
+                  marginTop: '12px',
+                  overflowY: 'auto',
+                  flex: 1
+                }}>
+                  <span className="mac-section-title" style={{ padding: '0 4px 4px 4px' }}>PREVIOUS CHATS</span>
+                  {filteredSessions.length === 0 ? (
+                    <div style={{
+                      padding: '12px',
+                      textAlign: 'center',
+                      color: 'var(--text-muted)',
+                      fontSize: '11px',
+                      fontStyle: 'italic'
+                    }}>
+                      No chats found
+                    </div>
+                  ) : (
+                    filteredSessions.map(s => {
+                      const isActive = s.id === currentSessionId;
+                      const hasPage = !!s.pageContent;
+                      return (
+                        <div 
+                          key={s.id} 
+                          className={`db-session-item ${isActive ? 'active' : ''}`}
+                          onClick={() => handleSelectSession(s.id)}
+                          style={{
+                            display: 'flex',
+                            alignItems: 'center',
+                            gap: '8px',
+                            padding: '8px 10px',
+                            borderRadius: '6px',
+                            cursor: 'pointer',
+                            background: isActive ? 'rgba(255, 122, 0, 0.1)' : 'transparent',
+                            border: isActive ? '1px solid var(--accent-orange)' : '1px solid transparent',
+                            transition: 'all 0.15s ease',
+                            position: 'relative',
+                            overflow: 'hidden'
+                          }}
+                        >
+                          <span style={{ fontSize: '13px' }}>{hasPage ? '🌐' : '💬'}</span>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', overflow: 'hidden', flex: 1, paddingRight: '12px' }}>
+                            <span style={{ 
+                              fontSize: '11px', 
+                              color: isActive ? 'var(--text-primary)' : 'var(--text-secondary)',
+                              fontWeight: isActive ? 'bold' : 'normal',
+                              whiteSpace: 'nowrap',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis'
+                            }} title={s.title}>
+                              {s.title}
+                            </span>
+                            <span style={{ fontSize: '9px', color: 'var(--text-muted)' }}>
+                              {new Date(s.id).toLocaleDateString()}
+                            </span>
+                          </div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDeleteSession(s.id);
+                            }}
+                            style={{
+                              background: 'none',
+                              border: 'none',
+                              color: 'var(--text-muted)',
+                              fontSize: '10px',
+                              cursor: 'pointer',
+                              padding: '4px',
+                              display: 'flex',
+                              alignItems: 'center',
+                              justifyContent: 'center',
+                              borderRadius: '4px',
+                              position: 'absolute',
+                              right: '6px'
+                            }}
+                            title="Delete Chat"
+                          >
+                            ✕
+                          </button>
+                        </div>
+                      );
+                    })
+                  )}
+                </div>
+              </div>
+            )}
+
+            <div className="mac-chat-pane">
+              <div className="mac-messages-container" ref={chatHistoryRef}>
+                {activeSession && activeSession.messages.length > 0 ? (
+                  activeSession.messages.map((msg, index) => {
+                    if (index === 0 && activeSession.messages.length > 1 && msg.content.includes("MOMENTUM OS")) return null;
+                    return (
+                      <div key={index} className={`mac-msg-row ${msg.role}`}>
+                        <div className="mac-msg-bubble">
+                          {msg.content}
+                          {msg.role === 'assistant' && (
+                            <button
+                              onClick={() => tts.speak(msg.content.replace(/[#*`_]/g, ''), getLangCode(activeSession.targetLanguage))}
+                              className="mac-bubble-speaker"
+                              title="Read aloud"
+                            >
+                              🔊
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })
                 ) : (
-                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
-                    {downloadedModels.map(m => (
-                      <span 
-                        key={m} 
-                        className={`mac-model-tag ${activeModel === m ? 'active' : ''}`}
-                        onClick={() => {
-                          setActiveModel(m);
-                          setShowModelHub(false);
-                        }}
-                      >
-                        {m}
-                      </span>
-                    ))}
+                  <div className="mac-empty-state">
+                    <div style={{ fontSize: '32px', marginBottom: '8px' }}>💬</div>
+                    <h3 style={{ fontSize: '13px', fontWeight: 600, color: 'var(--text-primary)' }}>Hello! I am your macOS browser assistant.</h3>
+                    <p style={{ fontSize: '11px', color: 'var(--text-muted)' }}>Type a message or speak to start.</p>
+
+                    <div className="mac-chips-container" style={{ display: 'flex', gap: '8px', marginTop: '16px' }}>
+                      <button className="mac-chip-btn" onClick={() => handleIntentAction('SUMMARIZE')}>
+                        📝 Summarize Page
+                      </button>
+                      <button className="mac-chip-btn" onClick={() => handleIntentAction('EXPLAIN_SIMPLE')}>
+                        👁️ Explain Simply
+                      </button>
+                      <button className="mac-chip-btn" onClick={() => handleIntentAction('EXAMPLE')}>
+                        📂 Generate Example
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
+
+              <div className="mac-footer">
+                <input 
+                  type="text" 
+                  className="mac-input"
+                  placeholder={stt.isListening ? "Listening..." : "Type a message or ask a question..."}
+                  value={inputText}
+                  onChange={(e) => setInputText(e.target.value)}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+                />
+                {stt.isSupported !== false && (
+                  <button 
+                    className={`mac-btn-mic ${stt.isListening ? 'listening' : ''}`}
+                    onClick={handleMicToggle}
+                    title={stt.isListening ? "Listening... Click to stop" : "Speak to type"}
+                  >
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                      <rect x="5" y="9" width="2" height="6" rx="1" fill="currentColor"/>
+                      <rect x="9" y="5" width="2" height="14" rx="1" fill="currentColor"/>
+                      <rect x="13" y="7" width="2" height="10" rx="1" fill="currentColor"/>
+                      <rect x="17" y="9" width="2" height="6" rx="1" fill="currentColor"/>
+                    </svg>
+                  </button>
+                )}
+                <button className="mac-btn-send" onClick={handleSend}>
+                  Send
+                </button>
+              </div>
             </div>
+
+            {showRightSidebar && (
+              <div className="mac-sidebar db-right-sidebar">
+                <div className="mac-section">
+                  <span className="mac-section-title">MODEL RUNNER</span>
+                  <div 
+                    className="mac-model-card" 
+                    onClick={() => setShowModelHub(!showModelHub)} 
+                    style={{ 
+                      cursor: 'pointer', 
+                      padding: '8px 12px', 
+                      display: 'flex', 
+                      alignItems: 'center', 
+                      gap: '8px',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px'
+                    }}
+                  >
+                    <span className={`mac-status-dot ${backendStatus}`}></span>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', width: '100%', gap: '8px' }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', lineHeight: '1.2' }}>
+                        <span className="mac-model-provider" style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--accent-orange)' }}>LM</span>
+                        <span className="mac-model-provider" style={{ fontSize: '11px', fontWeight: 'bold', color: 'var(--accent-orange)' }}>Studio</span>
+                      </div>
+                      <span className="mac-model-name" style={{ fontSize: '10px', color: 'var(--text-secondary)', fontWeight: 'bold', textAlign: 'right', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', maxWidth: '85px' }}>
+                        ({activeModel})
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="mac-section">
+                  <span className="mac-section-title">VOICE CONTROLS</span>
+                  <div className="mac-voice-controls">
+                    <button className="mac-ctrl-btn" onClick={tts.resume} title="Play / Resume">▶</button>
+                    <button className="mac-ctrl-btn" onClick={tts.pause} title="Pause">⏸</button>
+                    <button className="mac-ctrl-btn" onClick={tts.stop} title="Stop">⏹</button>
+                  </div>
+                </div>
+
+                <div className="mac-section">
+                  <span className="mac-section-title">SPEAKER VOICE</span>
+                  <div className="mac-select-wrapper">
+                    <select 
+                      value={activeSession ? activeSession.targetLanguage : targetLanguage}
+                      onChange={(e) => {
+                        const newLang = e.target.value;
+                        if (activeSession) {
+                          activeSession.targetLanguage = newLang;
+                          const updated = sessionsRef.current.map(s => s.id === currentSessionIdRef.current ? activeSession : s);
+                          saveSessionsToStorage(updated, currentSessionIdRef.current);
+                        } else {
+                          setTargetLanguage(newLang);
+                        }
+                      }}
+                      className="mac-select"
+                    >
+                      {['English (US)', 'English (UK)', 'Hindi', 'Bengali', 'Tamil', 'Telugu', 'Marathi', 'Gujarati', 'Kannada', 'Malayalam', 'Punjabi', 'Odia', 'Urdu', 'Sanskrit'].map(lang => (
+                        <option key={lang} value={lang}>{lang}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="mac-section" style={{ marginTop: '12px' }}>
+                  <span className="mac-section-title">PAGE CONTEXT</span>
+                  {activeSession && activeSession.pageContent ? (
+                    <div className="db-metadata-card" style={{
+                      padding: '10px',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-color)',
+                      borderRadius: '8px',
+                      display: 'flex',
+                      flexDirection: 'column',
+                      gap: '8px',
+                      fontSize: '11px'
+                    }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Title</span>
+                        <span style={{ color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={activeSession.pageContent.title}>
+                          {activeSession.pageContent.title}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: '2px' }}>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>URL</span>
+                        <span style={{ color: 'var(--accent-orange)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={activeSession.pageContent.url}>
+                          {activeSession.pageContent.url}
+                        </span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Words</span>
+                        <span style={{ color: 'var(--text-primary)', fontWeight: 'bold' }}>{activeSession.pageContent.wordCount}</span>
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                        <span style={{ color: 'var(--text-muted)', fontWeight: 600 }}>Method</span>
+                        <span style={{ color: 'var(--text-primary)', background: 'rgba(255, 122, 0, 0.1)', color: 'var(--accent-orange)', padding: '2px 6px', borderRadius: '4px', fontSize: '9px', fontWeight: 'bold' }}>
+                          {activeSession.pageContent.extractionMethod}
+                        </span>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{
+                      padding: '12px',
+                      background: 'var(--bg-card)',
+                      border: '1px dashed var(--border-color)',
+                      borderRadius: '8px',
+                      textAlign: 'center',
+                      color: 'var(--text-muted)',
+                      fontSize: '11px'
+                    }}>
+                      No active webpage context.
+                    </div>
+                  )}
+                </div>
+
+                <div className="mac-section" style={{ marginTop: 'auto', display: 'flex', flexDirection: 'column', gap: '8px' }}>
+                  <button className="mac-extract-btn" onClick={handleExtract} style={{
+                    padding: '6px 12px',
+                    borderRadius: '6px',
+                    border: '1px solid #3b82f6',
+                    background: '#3b82f6',
+                    fontSize: '11px',
+                    cursor: 'pointer',
+                    fontWeight: 600,
+                    color: '#ffffff'
+                  }}>
+                    ⚡ Extract Page
+                  </button>
+                  
+                  <div>
+                    <button 
+                      onClick={() => fileInputRef.current && fileInputRef.current.click()}
+                      style={{
+                        width: '100%',
+                        padding: '6px 12px',
+                        borderRadius: '6px',
+                        border: '1px solid var(--border-color)',
+                        background: 'var(--bg-card)',
+                        fontSize: '11px',
+                        cursor: 'pointer',
+                        fontWeight: 600,
+                        color: 'var(--text-secondary)'
+                      }}
+                    >
+                      📎 Upload PDF
+                    </button>
+                    <input 
+                      type="file" 
+                      ref={fileInputRef} 
+                      onChange={handleFileUpload} 
+                      accept=".txt,.js,.css,.html,.md,.json,.csv,.pdf" 
+                      style={{ display: 'none' }} 
+                    />
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        )}
+
+          {showModelHub && (
+            <div className="mac-overlay">
+              <div className="mac-overlay-header">
+                <span>🤖 Local Model Hub</span>
+                <button onClick={() => setShowModelHub(false)}>✕</button>
+              </div>
+              <div className="mac-overlay-body">
+                <div className="mac-status-row">
+                  <span className={`mac-dot ${backendStatus === 'online' ? 'online' : 'offline'}`}></span>
+                  <span>Ollama Status: <strong>{backendStatus === 'online' ? 'Online' : 'Offline'}</strong></span>
+                </div>
+                {backendStatus === 'offline' && (
+                  <div className="mac-alert-box">
+                    Ollama is offline. Start it by running <code>ollama serve</code> in terminal.
+                  </div>
+                )}
+                <div style={{ marginTop: '10px' }}>
+                  <span style={{ fontSize: '11px', fontWeight: 700, color: 'var(--text-muted)', display: 'block', marginBottom: '4px' }}>DOWNLOADED MODELS:</span>
+                  {downloadedModels.length === 0 ? (
+                    <span style={{ fontSize: '11px', color: 'var(--text-muted)' }}>No models downloaded.</span>
+                  ) : (
+                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px' }}>
+                      {downloadedModels.map(m => (
+                        <span 
+                          key={m} 
+                          className={`mac-model-tag ${activeModel === m ? 'active' : ''}`}
+                          onClick={() => {
+                            setActiveModel(m);
+                            setShowModelHub(false);
+                          }}
+                        >
+                          {m}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
       </div>
-    </div>
-  );
+    );
+  };
+
+  return isPopup ? renderPopupMode() : renderDashboardMode();
 }
 
 export default App;
