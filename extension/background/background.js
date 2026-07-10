@@ -33,6 +33,8 @@ chrome.action.onClicked.addListener((tab) => {
   });
 });
 
+let activeQueryAbortController = null;
+
 // Listener for messages from popup or content script
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[Background] Received message:', message);
@@ -61,6 +63,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         .catch(err => sendResponse({ status: 'error', message: err.message }));
       return true; // async response
 
+    case 'ABORT_QUERY':
+      if (activeQueryAbortController) {
+        activeQueryAbortController.abort();
+        activeQueryAbortController = null;
+        console.log('[Background] Active query aborted by user request.');
+        sendResponse({ status: 'success' });
+      } else {
+        sendResponse({ status: 'ignored' });
+      }
+      return true;
+
     default:
       console.warn('[Background] Unknown action:', message.action);
       sendResponse({ status: 'error', message: `Unknown action: ${message.action}` });
@@ -73,20 +86,54 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
  * Routes to /api/summarize if the intent is SUMMARIZE.
  */
 async function handleUserQuery(payload) {
+  if (activeQueryAbortController) {
+    activeQueryAbortController.abort();
+  }
+  activeQueryAbortController = new AbortController();
+  const signal = activeQueryAbortController.signal;
+
   const isSummarize = payload.intent === 'SUMMARIZE';
   const endpoint = isSummarize ? `${BACKEND_URL}/api/summarize` : `${BACKEND_URL}/api/query`;
 
-  const response = await fetch(endpoint, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify(payload)
-  });
+  try {
+    const response = await fetch(endpoint, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify(payload),
+      signal: signal
+    });
 
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    return await response.json();
+  } finally {
+    if (activeQueryAbortController?.signal === signal) {
+      activeQueryAbortController = null;
+    }
   }
-
-  return response.json();
 }
+
+// Tab update listener to resume agent automation on page navigation
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  if (changeInfo.status === 'complete' && tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('chrome-extension://')) {
+    chrome.storage.local.get(['agentActiveTask'], (result) => {
+      if (result.agentActiveTask) {
+        console.log('[Background] Active agent task detected on page load. Auto-injecting and opening panel.');
+        chrome.scripting.executeScript({
+          target: { tabId: tabId },
+          files: ['content/Readability.js', 'content/content.js']
+        }).then(() => {
+          setTimeout(() => {
+            chrome.tabs.sendMessage(tabId, { action: 'OPEN_FLOATING_PANEL' });
+          }, 150);
+        }).catch(err => {
+          console.warn('[Background] Failed to auto-inject content script on updated tab:', err);
+        });
+      }
+    });
+  }
+});

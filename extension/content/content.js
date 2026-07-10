@@ -11,8 +11,15 @@
  *   3. Density-scoring fallback (generic pages)
  */
 
-// Listener for messages from background/popup
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+(function() {
+  if (window.__aiCompanionInjected) {
+    console.log('[AI Browser Companion] Content script already injected. Skipping.');
+    return;
+  }
+  window.__aiCompanionInjected = true;
+
+  // Listener for messages from background/popup
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   console.log('[Content Script] Received message:', message);
 
   if (message.action === 'TRIGGER_EXTRACTION') {
@@ -25,6 +32,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     }
   } else if (message.action === 'TOGGLE_FLOATING_PANEL') {
     toggleFloatingPanel();
+    sendResponse({ status: 'success' });
+  } else if (message.action === 'OPEN_FLOATING_PANEL') {
+    if (!panelContainer || !panelContainer.classList.contains('visible')) {
+      toggleFloatingPanel();
+    }
     sendResponse({ status: 'success' });
   }
   return true;
@@ -187,6 +199,9 @@ let shadowHost = null;
 let shadowRoot = null;
 let panelContainer = null;
 let fabElement = null;
+let panelIframe = null;
+let annotatedElements = [];
+let annotationBadges = [];
 
 let currentTop = 100;
 let currentLeft = window.innerWidth - 810;
@@ -290,6 +305,8 @@ function initShadowDOM() {
   
   const iframe = document.createElement('iframe');
   iframe.src = chrome.runtime.getURL('popup/index.html');
+  iframe.allow = "microphone";
+  panelIframe = iframe;
   panelContainer.appendChild(iframe);
   shadowRoot.appendChild(panelContainer);
 
@@ -466,8 +483,140 @@ window.addEventListener('message', (event) => {
     if (panelContainer && panelContainer.classList.contains('visible')) {
       toggleFloatingPanel();
     }
+  } else if (event.data.type === 'COMPANION_GET_ELEMENTS') {
+    const elements = annotateInteractiveElements();
+    if (panelIframe && panelIframe.contentWindow) {
+      panelIframe.contentWindow.postMessage({ type: 'COMPANION_ELEMENTS_LIST', elements }, '*');
+    }
+  } else if (event.data.type === 'COMPANION_CLEAR_ELEMENTS') {
+    clearAnnotations();
+  } else if (event.data.type === 'COMPANION_EXECUTE_ACTION') {
+    const result = executeAgentAction(event.data.action);
+    if (panelIframe && panelIframe.contentWindow) {
+      panelIframe.contentWindow.postMessage({ type: 'COMPANION_EXECUTE_RESULT', result }, '*');
+    }
   }
 });
+
+/**
+ * Annotates all interactive elements on the page with numeric badges and returns a list.
+ */
+function annotateInteractiveElements() {
+  clearAnnotations();
+
+  const elements = Array.from(document.querySelectorAll('input:not([type="hidden"]):not([type="submit"]):not([type="button"]), textarea, button, select, a, [role="button"], [role="textbox"], [role="link"], [contenteditable="true"]'));
+  let id = 1;
+  const representation = [];
+
+  elements.forEach(el => {
+    // Skip element if it is part of our companion iframe or Shadow DOM
+    if (el.closest('#ai-browser-companion-root') || el.closest('#ai-companion-floating-panel') || el.closest('#ai-companion-fab')) {
+      return;
+    }
+
+    const rect = el.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return;
+
+    annotatedElements.push({ id, element: el });
+
+    const badge = document.createElement('div');
+    badge.innerText = `${id}`;
+    
+    // Position absolute relative to page coordinates
+    Object.assign(badge.style, {
+      position: 'absolute',
+      top: `${window.scrollY + rect.top}px`,
+      left: `${window.scrollX + rect.left}px`,
+      backgroundColor: '#f59e0b',
+      color: '#ffffff',
+      fontSize: '10px',
+      fontWeight: 'bold',
+      fontFamily: 'sans-serif',
+      padding: '2px 5px',
+      borderRadius: '4px',
+      zIndex: '2147483646',
+      pointerEvents: 'none',
+      boxShadow: '0 2px 4px rgba(0,0,0,0.2)',
+      border: '1px solid #ffffff',
+      display: 'inline-block',
+      lineHeight: '1',
+      transform: 'translate(-50%, -50%)'
+    });
+
+    document.body.appendChild(badge);
+    annotationBadges.push(badge);
+
+    let label = '';
+    if (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA') {
+      label = el.placeholder || el.name || el.ariaLabel || el.id || 'Input Box';
+    } else {
+      label = el.innerText.trim() || el.ariaLabel || el.title || el.id || el.tagName.toLowerCase();
+    }
+    
+    if (label.length > 50) {
+      label = label.substring(0, 47) + '...';
+    }
+
+    representation.push({
+      id: id,
+      type: el.tagName.toLowerCase(),
+      label: label
+    });
+
+    id++;
+  });
+
+  return representation;
+}
+
+/**
+ * Clears all overlays and tracked elements.
+ */
+function clearAnnotations() {
+  annotationBadges.forEach(badge => {
+    try { badge.remove(); } catch (err) {}
+  });
+  annotationBadges = [];
+  annotatedElements = [];
+}
+
+/**
+ * Executes a specific RPA action on a tracked element.
+ */
+function executeAgentAction(action) {
+  if (action.action === 'scroll') {
+    const amount = action.direction === 'up' ? -400 : 400;
+    window.scrollBy({ top: amount, behavior: 'smooth' });
+    return { success: true, message: `Scrolled page ${action.direction}` };
+  }
+
+  const target = annotatedElements.find(item => item.id === parseInt(action.id));
+  if (!target) {
+    return { success: false, error: `Element with tag ID ${action.id} not found.` };
+  }
+
+  const el = target.element;
+
+  if (action.action === 'click') {
+    el.focus();
+    el.click();
+    el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    return { success: true, message: `Clicked element [${action.id}]` };
+  }
+
+  if (action.action === 'type') {
+    el.focus();
+    el.value = action.text;
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+    return { success: true, message: `Typed "${action.text}" into element [${action.id}]` };
+  }
+
+  return { success: false, error: `Unknown action: ${action.action}` };
+}
 
 // Initialize on page load
 if (document.readyState === 'complete' || document.readyState === 'interactive') {
@@ -477,3 +626,4 @@ if (document.readyState === 'complete' || document.readyState === 'interactive')
 }
 
 console.log('[AI Browser Companion] Content script with floating panel initialized.');
+})();

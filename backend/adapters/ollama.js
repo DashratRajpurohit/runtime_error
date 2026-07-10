@@ -27,7 +27,7 @@ export class OllamaAdapter {
    * @param {Array}  params.history       - Prior messages [{role, content}]
    * @param {string} params.userQuery     - The user's question
    */
-  async complete({ systemPrompt, pageContent, history, userQuery }) {
+  async complete({ systemPrompt, pageContent, history, userQuery, format }) {
     const endpoint = `${this.host}/api/chat`;
 
     // ── Build the messages array ──────────────────────────────────────────────
@@ -85,7 +85,8 @@ export class OllamaAdapter {
             model: this.modelName,
             messages,
             stream: false,
-            options
+            options,
+            format: format
           })
         });
 
