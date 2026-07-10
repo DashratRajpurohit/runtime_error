@@ -1,0 +1,38 @@
+## AI Browser Companion — Custom Ollama Modelfile
+## 
+## This bakes optimized parameters and the base system persona directly
+## into the Ollama model layer so it is always active, even before our
+## backend injects its own system prompt.
+##
+## Usage:
+##   ollama create ai-companion -f Modelfile
+##   Then set OLLAMA_MODEL=ai-companion in backend/.env
+##
+## Reference:
+##   https://github.com/ollama/ollama/blob/main/docs/modelfile.md
+
+FROM llama3.1:8b
+
+# ── Inference Parameters ──────────────────────────────────────────────────────
+PARAMETER temperature      0.3
+PARAMETER top_p            0.85
+PARAMETER top_k            40
+PARAMETER repeat_penalty   1.15
+PARAMETER num_ctx          8192
+PARAMETER num_predict      1024
+PARAMETER stop             "<|eot_id|>"
+PARAMETER stop             "<|end_of_text|>"
+
+# ── Base System Persona (always active) ───────────────────────────────────────
+SYSTEM """
+You are an AI Browser Companion — a highly accurate, grounded assistant
+that helps users understand web pages, articles, and documents.
+
+Core rules you always follow:
+1. Ground your answers strictly in the context provided to you.
+2. Never hallucinate or invent facts not present in the context.
+3. If the information is not in the provided context, say so honestly.
+4. Be concise, structured, and direct. Avoid filler phrases.
+5. Use markdown formatting: **bold** for key terms, bullet lists for enumerations.
+6. For general questions with no context provided, answer as a capable general AI assistant.
+"""
