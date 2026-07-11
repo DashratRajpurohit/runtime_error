@@ -63,7 +63,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     case 'AGENT_GOTO_URL':
       chrome.tabs.create({ url: message.payload.url }, (tab) => {
-        sendResponse({ status: 'success', tabId: tab.id });
+        let responded = false;
+        
+        const listener = (tabId, info) => {
+          if (tabId === tab.id && info.status === 'complete' && !responded) {
+            responded = true;
+            chrome.tabs.onUpdated.removeListener(listener);
+            sendResponse({ status: 'success', tabId: tab.id });
+          }
+        };
+        
+        chrome.tabs.onUpdated.addListener(listener);
+        
+        setTimeout(() => {
+          if (!responded) {
+            responded = true;
+            chrome.tabs.onUpdated.removeListener(listener);
+            sendResponse({ status: 'success', tabId: tab.id, note: 'Timeout waiting for complete' });
+          }
+        }, 5000);
       });
       return true;
 
@@ -88,18 +106,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         if (!tabs[0]) return sendResponse({ status: 'error', message: 'No active tab' });
         chrome.scripting.executeScript({
           target: { tabId: tabs[0].id },
-          func: (selector, text) => {
+          func: (selector, text, pressEnter) => {
             const el = document.querySelector(selector);
             if (el) { 
               el.focus();
               el.value = text;
               el.dispatchEvent(new Event('input', { bubbles: true }));
               el.dispatchEvent(new Event('change', { bubbles: true }));
+              
+              if (pressEnter) {
+                el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+                el.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', keyCode: 13, bubbles: true }));
+                // Also trigger form submit if it's in a form, just in case React doesn't catch the keydown
+                if (el.form) {
+                  el.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+                }
+              }
               return { success: true }; 
             }
             return { success: false, error: 'Element not found' };
           },
-          args: [message.payload.selector, message.payload.text]
+          args: [message.payload.selector, message.payload.text, message.payload.pressEnter || false]
         }).then(results => sendResponse({ status: 'success', data: results[0].result }))
           .catch(err => sendResponse({ status: 'error', message: err.message }));
       });

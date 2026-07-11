@@ -512,20 +512,8 @@ function App() {
     }
   };
 
-  // Helper to convert ArrayBuffer to Base64
-  const arrayBufferToBase64 = (buffer) => {
-    let binary = '';
-    const bytes = new Uint8Array(buffer);
-    const len = bytes.byteLength;
-    for (let i = 0; i < len; i++) {
-      binary += String.fromCharCode(bytes[i]);
-    }
-    return window.btoa(binary);
-  };
-
   // Helper to extract text from PDF via backend parser
-  const extractTextFromPDF = async (arrayBuffer) => {
-    const base64 = arrayBufferToBase64(arrayBuffer);
+  const extractTextFromPDF = async (base64) => {
     const response = await fetch('http://localhost:4000/api/parse-pdf', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -553,8 +541,9 @@ function App() {
       const reader = new FileReader();
       reader.onload = async (event) => {
         try {
-          const arrayBuffer = event.target.result;
-          const text = await extractTextFromPDF(arrayBuffer);
+          const dataUrl = event.target.result;
+          const base64 = dataUrl.split(',')[1];
+          const text = await extractTextFromPDF(base64);
           
           stopTimer();
           updateUIState('Idle', 'Ready');
@@ -591,14 +580,14 @@ function App() {
           if (active) {
             active.messages.push({
               role: 'assistant',
-              content: `CRITICAL ERROR: Failed to parse PDF file "${file.name}". Ensure it is a valid, readable text document.`
+              content: `CRITICAL ERROR: Failed to parse PDF file "${file.name}". Error details: ${error.message}`
             });
             const updated = sessionsRef.current.map(s => s.id === currentSessionIdRef.current ? active : s);
             saveSessionsToStorage(updated, currentSessionIdRef.current);
           }
         }
       };
-      reader.readAsArrayBuffer(file);
+      reader.readAsDataURL(file);
     } else {
       // Plain text reader fallback
       const reader = new FileReader();
@@ -744,6 +733,7 @@ function App() {
     
     let isDone = false;
     let stepCount = 0;
+    let lastActionStr = null;
     
     while (!isDone && stepCount < 10) {
       stepCount++;
@@ -787,6 +777,16 @@ function App() {
         }
         
         const action = agentData.action || { type: 'ERROR', message: 'No action provided' };
+        
+        const currentActionStr = JSON.stringify(action);
+        if (lastActionStr === currentActionStr) {
+           active.messages.push({ role: 'assistant', content: `[System]: Auto-stopped to prevent infinite loop on identical action: ${action.type}` });
+           isDone = true;
+           const updated2 = sessionsRef.current.map(s => s.id === currentSessionIdRef.current ? active : s);
+           saveSessionsToStorage(updated2, currentSessionIdRef.current);
+           break;
+        }
+        lastActionStr = currentActionStr;
         
         if (action.type === 'DONE' || action.type === 'ERROR') {
           active.messages.push({ role: 'assistant', content: action.message || 'Done.' });
@@ -966,17 +966,70 @@ function App() {
                                       err.message.toLowerCase().includes('allow') ||
                                       err.message.toLowerCase().includes('denied');
 
+            if (isPermissionError && typeof chrome !== 'undefined' && chrome.tabs) {
+              chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+                if (!tabs || !tabs[0]) return;
+                
+                // Set up listener for the injected script
+                const msgHandler = (msg) => {
+                  if (msg.type === 'STT_INTERIM') {
+                    setInputText(msg.text);
+                  } else if (msg.type === 'STT_FINAL') {
+                    if (msg.text.trim()) {
+                      setInputText(msg.text);
+                      handleSend(msg.text);
+                    }
+                    updateUIState('Idle', 'Ready');
+                    chrome.runtime.onMessage.removeListener(msgHandler);
+                  } else if (msg.type === 'STT_END' || msg.type === 'STT_ERROR') {
+                    updateUIState('Idle', 'Ready');
+                    chrome.runtime.onMessage.removeListener(msgHandler);
+                    if (msg.type === 'STT_ERROR' && msg.error) {
+                      console.error('[Proxy STT Error]', msg.error);
+                    }
+                  }
+                };
+                chrome.runtime.onMessage.addListener(msgHandler);
+                
+                // Inject the Web Speech API directly into the user's active tab!
+                chrome.scripting.executeScript({
+                  target: { tabId: tabs[0].id },
+                  func: (lang) => {
+                    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+                    if (!SR) return chrome.runtime.sendMessage({ type: 'STT_ERROR', error: 'Not supported' });
+                    
+                    const sr = new SR();
+                    sr.lang = lang;
+                    sr.interimResults = true;
+                    
+                    sr.onresult = (e) => {
+                      let interim = '';
+                      let final = '';
+                      for (let i = e.resultIndex; i < e.results.length; i++) {
+                        if (e.results[i].isFinal) final += e.results[i][0].transcript;
+                        else interim += e.results[i][0].transcript;
+                      }
+                      if (final) chrome.runtime.sendMessage({ type: 'STT_FINAL', text: final.trim() });
+                      else chrome.runtime.sendMessage({ type: 'STT_INTERIM', text: interim.trim() });
+                    };
+                    
+                    sr.onerror = (e) => chrome.runtime.sendMessage({ type: 'STT_ERROR', error: e.error });
+                    sr.onend = () => chrome.runtime.sendMessage({ type: 'STT_END' });
+                    sr.start();
+                  },
+                  args: [getLangCode(active.targetLanguage)]
+                }).catch(() => {
+                   chrome.runtime.onMessage.removeListener(msgHandler);
+                });
+              });
+              return; // Skip showing the error chat bubble
+            }
+
             const activeS = getActiveSession();
             if (activeS) {
-              let msgContent = `🎙️ Microphone error: ${err.message}`;
-              if (isPermissionError && typeof chrome !== 'undefined' && chrome.tabs && chrome.tabs.create) {
-                msgContent = `🎙️ MICROPHONE PERMISSION REQUIRED: Google Chrome blocks permission prompts inside popup side panels. \n\nI have automatically opened a permission tab for you. Please click "Allow" on the browser prompt there, then close that tab and return here!`;
-                chrome.tabs.create({ url: chrome.runtime.getURL("popup/index.html?request_mic=true") });
-              }
-
               activeS.messages.push({
                 role: 'assistant',
-                content: msgContent
+                content: `🎙️ Microphone error: ${err.message}`
               });
               const updated = sessionsRef.current.map(s => s.id === currentSessionIdRef.current ? activeS : s);
               saveSessionsToStorage(updated, currentSessionIdRef.current);

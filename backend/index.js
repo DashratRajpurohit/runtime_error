@@ -12,6 +12,7 @@ const require = createRequire(import.meta.url);
 const pdf = require('pdf-parse');
 
 dotenv.config();
+dotenv.config({ path: 'secrets.env' });
 
 /**
  * Strips all Markdown formatting from a text string so it reads
@@ -319,6 +320,7 @@ CRITICAL INSTRUCTIONS:
     "url": "https://example.com" (only if AGENT_GOTO_URL),
     "selector": "#id or .class or [data-agent-id=...]" (only if AGENT_CLICK, AGENT_TYPE, or AGENT_EXTRACT_DATA),
     "text": "text to type" (only if AGENT_TYPE),
+    "pressEnter": true (boolean, set to true if you want to submit the search/form after typing, only if AGENT_TYPE),
     "direction": "up or down" (only if AGENT_SCROLL),
     "time": 2000 (milliseconds to wait, only if AGENT_WAIT),
     "message": "final answer or error message" (only if DONE or ERROR)
@@ -353,6 +355,34 @@ Ensure your output is raw, strictly valid JSON. Do not wrap in markdown code blo
     let parsed;
     try {
       parsed = JSON.parse(jsonStr.trim());
+      
+      // If Nemotron omitted the "action" wrapper and put fields at the root
+      if (!parsed.action && parsed.type) {
+        parsed = {
+          thought: parsed.thought || "No thought provided.",
+          action: parsed
+        };
+      }
+      
+      if (!parsed.action) {
+        parsed.action = { type: 'ERROR', message: `LLM did not provide an action field! Raw output: ${JSON.stringify(parsed)}` };
+      }
+      
+      if (parsed.action && typeof parsed.action.type === 'string') {
+        const typeMap = {
+          'AGENTGOTOURL': 'AGENT_GOTO_URL',
+          'AGENTCLICK': 'AGENT_CLICK',
+          'AGENTTYPE': 'AGENT_TYPE',
+          'AGENTGETDOM': 'AGENT_GET_DOM',
+          'AGENTEXTRACTDATA': 'AGENT_EXTRACT_DATA',
+          'AGENTSCROLL': 'AGENT_SCROLL',
+          'AGENTWAIT': 'AGENT_WAIT'
+        };
+        if (typeMap[parsed.action.type]) {
+          parsed.action.type = typeMap[parsed.action.type];
+        }
+      }
+      
     } catch (parseErr) {
       console.error('[Backend Agent] JSON Parse Error:', parseErr.message, 'Raw JSON string:', jsonStr);
       parsed = {

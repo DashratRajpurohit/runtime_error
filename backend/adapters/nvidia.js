@@ -40,14 +40,15 @@ class RateLimiter {
   }
 }
 
-// 35 requests per minute = 1 request every ~1714 ms. We use 1750ms to be safe.
-const limiter = new RateLimiter(1750);
+// 35 requests per minute is the stated limit, but NVIDIA workers can get exhausted
+// if we burst too consistently. Using 3000ms delay ensures extreme safety.
+const limiter = new RateLimiter(3000);
 
 export class NvidiaAdapter {
   constructor() {
-    this.apiKey = process.env.NVIDIA_API_KEY;
+    this.apiKey = process.env.NAK;
     if (!this.apiKey && process.env.LLM_PROVIDER === 'nvidia') {
-      console.warn('Warning: NVIDIA_API_KEY environment variable is not configured.');
+      console.warn('Warning: NAK environment variable is not configured.');
     }
     
     this.client = new OpenAI({

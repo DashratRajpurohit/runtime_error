@@ -16,6 +16,7 @@ __pycache__/
 .env
 .env.local
 .env.*.local
+secrets.env
 
 # OS files
 .DS_Store
